@@ -1,0 +1,120 @@
+using DotNetPerformanceLab.Benchmarking;
+using DotNetPerformanceLab.Data.Database;
+using Microsoft.EntityFrameworkCore;
+
+namespace DotNetPerformanceLab.Tests;
+
+public class DatabaseScenarioTests
+{
+    [Fact]
+    public void Seeding_IsDeterministic_ForSmallDataset()
+    {
+        RetailDatabaseFixture firstFixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        RetailDatabaseFixture secondFixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+
+        using RetailDbContext firstContext = firstFixture.CreateDbContext();
+        using RetailDbContext secondContext = secondFixture.CreateDbContext();
+
+        var firstSignature = firstContext.Orders
+            .AsNoTracking()
+            .OrderBy(o => o.Id)
+            .Take(25)
+            .Select(o => new
+            {
+                o.Id,
+                o.CustomerId,
+                o.OrderDate,
+                o.Status,
+                LineCount = o.OrderItems.Count
+            })
+            .ToArray();
+
+        var secondSignature = secondContext.Orders
+            .AsNoTracking()
+            .OrderBy(o => o.Id)
+            .Take(25)
+            .Select(o => new
+            {
+                o.Id,
+                o.CustomerId,
+                o.OrderDate,
+                o.Status,
+                LineCount = o.OrderItems.Count
+            })
+            .ToArray();
+
+        Assert.Equal(firstSignature.Length, secondSignature.Length);
+        for (int index = 0; index < firstSignature.Length; index++)
+        {
+            Assert.Equal(firstSignature[index].Id, secondSignature[index].Id);
+            Assert.Equal(firstSignature[index].CustomerId, secondSignature[index].CustomerId);
+            Assert.Equal(firstSignature[index].OrderDate, secondSignature[index].OrderDate);
+            Assert.Equal(firstSignature[index].Status, secondSignature[index].Status);
+            Assert.Equal(firstSignature[index].LineCount, secondSignature[index].LineCount);
+        }
+    }
+
+    [Fact]
+    public void SeededData_HasReferentialIntegrity()
+    {
+        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        using RetailDbContext dbContext = fixture.CreateDbContext();
+
+        int orphanOrders = dbContext.Orders.Count(order => !dbContext.Customers.Any(customer => customer.Id == order.CustomerId));
+        int orphanOrderItemsByOrder = dbContext.OrderItems.Count(item => !dbContext.Orders.Any(order => order.Id == item.OrderId));
+        int orphanOrderItemsByProduct = dbContext.OrderItems.Count(item => !dbContext.Products.Any(product => product.Id == item.ProductId));
+
+        Assert.Equal(0, orphanOrders);
+        Assert.Equal(0, orphanOrderItemsByOrder);
+        Assert.Equal(0, orphanOrderItemsByProduct);
+    }
+
+    [Fact]
+    public void AllImplementations_ReturnEquivalentResults()
+    {
+        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        DatabaseReportingQueryService queryService = new(fixture);
+        DatabaseCorrectnessVerifier verifier = new(queryService);
+
+        DatabaseCorrectnessVerificationResult verification = verifier.VerifyAllEquivalent(fixture.ReportQuery, decimalTolerance: 0.01m);
+
+        Assert.Equal(6, verification.ResultsByApproach.Count);
+    }
+
+    [Fact]
+    public void Report_IsFilteredAndOrdered()
+    {
+        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        DatabaseReportingQueryService queryService = new(fixture);
+
+        var report = queryService.RunEfProjection(fixture.ReportQuery);
+
+        Assert.NotEmpty(report);
+        Assert.All(report, order =>
+        {
+            Assert.True(order.OrderDate >= fixture.ReportQuery.StartDateUtcInclusive);
+            Assert.True(order.OrderDate < fixture.ReportQuery.EndDateUtcExclusive);
+        });
+
+        for (int index = 1; index < report.Count; index++)
+        {
+            var previous = report[index - 1];
+            var current = report[index];
+
+            bool ordered = previous.OrderDate < current.OrderDate
+                || (previous.OrderDate == current.OrderDate && previous.OrderId <= current.OrderId);
+
+            Assert.True(ordered);
+        }
+    }
+
+    [Theory]
+    [InlineData(DatasetSize.Small, 1_000)]
+    [InlineData(DatasetSize.Medium, 50_000)]
+    [InlineData(DatasetSize.Large, 250_000)]
+    public void DatasetProfiles_MapToExpectedOrderCounts(DatasetSize datasetSize, int expectedOrderCount)
+    {
+        RetailDatasetProfile profile = RetailDatasetProfiles.Get(datasetSize);
+        Assert.Equal(expectedOrderCount, profile.OrderCount);
+    }
+}
