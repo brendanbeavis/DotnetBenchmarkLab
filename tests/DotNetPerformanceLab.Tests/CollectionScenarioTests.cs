@@ -64,27 +64,70 @@ public class CollectionScenarioTests
     public void AllImplementations_ReturnEquivalentResults()
     {
         CollectionDatasetFixture fixture = CollectionDatasetGenerator.Create(DatasetSize.Small);
+        CollectionDatasetProfile profile = CollectionDatasetProfiles.Get(DatasetSize.Small);
         CollectionsAggregationService service = new();
         CollectionsCorrectnessVerifier verifier = new(service);
 
-        CollectionsCorrectnessVerificationResult result = verifier.VerifyAllEquivalent(fixture.Transactions);
+        CollectionsCorrectnessVerificationResult result = verifier.VerifyAllEquivalent(fixture.Transactions, profile.CategoryCardinality);
 
-        Assert.Equal(5, result.ResultsByApproach.Count);
+        Assert.Equal(6, result.ResultsByApproach.Count);
     }
 
     [Fact]
-    public void EmptyInput_ReturnsZeroSummaryWithNoCategories()
+    public void EmptyInput_AllApproachesMatchReference()
     {
-        CollectionsAggregationService service = new();
-        var summary = service.AggregateWithForeach([]);
+        AssertAllApproachesMatchReference([], estimatedCategoryCardinality: 0);
+    }
 
-        Assert.Equal(0, summary.TotalTransactionCount);
-        Assert.Equal(0, summary.TotalUnitsSold);
-        Assert.Equal(0m, summary.GrossSales);
-        Assert.Equal(0m, summary.TotalDiscounts);
-        Assert.Equal(0m, summary.NetSales);
-        Assert.Empty(summary.CategorySales);
-        Assert.Empty(summary.CategoryTransactionCounts);
+    [Fact]
+    public void SingleItem_AllApproachesMatchReference()
+    {
+        IReadOnlyList<RetailTransaction> transactions =
+        [
+            new RetailTransaction(1, 100, "Apparel", 2, 19.95m, 0.10m, DateTime.SpecifyKind(new DateTime(2024, 1, 1), DateTimeKind.Utc))
+        ];
+
+        AssertAllApproachesMatchReference(transactions, estimatedCategoryCardinality: 1);
+    }
+
+    [Fact]
+    public void MultipleCategory_AllApproachesMatchReference()
+    {
+        IReadOnlyList<RetailTransaction> transactions =
+        [
+            new RetailTransaction(1, 100, "Apparel", 1, 10m, 0.10m, DateTime.SpecifyKind(new DateTime(2024, 1, 1), DateTimeKind.Utc)),
+            new RetailTransaction(2, 101, "Electronics", 2, 20m, 0.05m, DateTime.SpecifyKind(new DateTime(2024, 1, 2), DateTimeKind.Utc)),
+            new RetailTransaction(3, 102, "Books", 3, 30m, 0m, DateTime.SpecifyKind(new DateTime(2024, 1, 3), DateTimeKind.Utc)),
+            new RetailTransaction(4, 103, "Apparel", 1, 12m, 0m, DateTime.SpecifyKind(new DateTime(2024, 1, 4), DateTimeKind.Utc))
+        ];
+
+        AssertAllApproachesMatchReference(transactions, estimatedCategoryCardinality: 3);
+    }
+
+    [Fact]
+    public void ZeroDiscount_AllApproachesMatchReference()
+    {
+        IReadOnlyList<RetailTransaction> transactions =
+        [
+            new RetailTransaction(1, 100, "Apparel", 2, 20m, 0m, DateTime.SpecifyKind(new DateTime(2024, 1, 1), DateTimeKind.Utc)),
+            new RetailTransaction(2, 101, "Electronics", 1, 15m, 0m, DateTime.SpecifyKind(new DateTime(2024, 1, 2), DateTimeKind.Utc)),
+            new RetailTransaction(3, 102, "Apparel", 3, 5m, 0m, DateTime.SpecifyKind(new DateTime(2024, 1, 3), DateTimeKind.Utc))
+        ];
+
+        AssertAllApproachesMatchReference(transactions, estimatedCategoryCardinality: 2);
+    }
+
+    [Fact]
+    public void FractionalMonetary_AllApproachesMatchReference()
+    {
+        IReadOnlyList<RetailTransaction> transactions =
+        [
+            new RetailTransaction(1, 100, "Apparel", 3, 12.34m, 0.07m, DateTime.SpecifyKind(new DateTime(2024, 1, 1), DateTimeKind.Utc)),
+            new RetailTransaction(2, 101, "Apparel", 1, 99.99m, 0.13m, DateTime.SpecifyKind(new DateTime(2024, 1, 2), DateTimeKind.Utc)),
+            new RetailTransaction(3, 102, "Books", 2, 7.77m, 0.19m, DateTime.SpecifyKind(new DateTime(2024, 1, 3), DateTimeKind.Utc))
+        ];
+
+        AssertAllApproachesMatchReference(transactions, estimatedCategoryCardinality: 2);
     }
 
     [Fact]
@@ -100,7 +143,7 @@ public class CollectionScenarioTests
         CollectionsAggregationService service = new();
         CollectionsCorrectnessVerifier verifier = new(service);
 
-        CollectionsCorrectnessVerificationResult verification = verifier.VerifyAllEquivalent(transactions);
+        CollectionsCorrectnessVerificationResult verification = verifier.VerifyAllEquivalent(transactions, estimatedCategoryCardinality: 2);
 
         var summary = verification.ResultsByApproach[CollectionsAggregationApproach.Foreach];
         Assert.Equal(3, summary.TotalTransactionCount);
@@ -121,7 +164,7 @@ public class CollectionScenarioTests
         ];
 
         CollectionsAggregationService service = new();
-        var summary = service.AggregateWithDictionary(transactions);
+        var summary = service.AggregateWithPresizedDictionary(transactions, estimatedCategoryCount: 3);
 
         Assert.Equal(["A", "M", "Z"], summary.CategorySales.Select(x => x.Category).ToArray());
         Assert.Equal(["A", "M", "Z"], summary.CategoryTransactionCounts.Select(x => x.Category).ToArray());
@@ -135,5 +178,24 @@ public class CollectionScenarioTests
     {
         CollectionDatasetProfile profile = CollectionDatasetProfiles.Get(datasetSize);
         Assert.Equal(expected, profile.TransactionCount);
+    }
+
+    [Theory]
+    [InlineData(DatasetSize.Small, 8)]
+    [InlineData(DatasetSize.Medium, 8)]
+    [InlineData(DatasetSize.Large, 8)]
+    public void DatasetProfiles_ExposeCategoryCardinality(DatasetSize datasetSize, int expected)
+    {
+        CollectionDatasetProfile profile = CollectionDatasetProfiles.Get(datasetSize);
+        Assert.Equal(expected, profile.CategoryCardinality);
+    }
+
+    private static void AssertAllApproachesMatchReference(IReadOnlyList<RetailTransaction> transactions, int estimatedCategoryCardinality)
+    {
+        CollectionsAggregationService service = new();
+        CollectionsCorrectnessVerifier verifier = new(service);
+        CollectionsCorrectnessVerificationResult verification = verifier.VerifyAllEquivalent(transactions, estimatedCategoryCardinality);
+
+        Assert.Equal(6, verification.ResultsByApproach.Count);
     }
 }

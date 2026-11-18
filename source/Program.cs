@@ -31,6 +31,7 @@ static void PrintUsage()
     AnsiConsole.MarkupLine("  dotnet run -c Release -- --benchmark all --dataset medium");
     AnsiConsole.MarkupLine("  dotnet run -c Release -- --benchmark database --dataset small");
     AnsiConsole.MarkupLine("  dotnet run -c Release -- --benchmark collections --dataset medium");
+    AnsiConsole.MarkupLine("  dotnet run -c Release -- --benchmark asyncio --dataset medium");
     AnsiConsole.MarkupLine("  dotnet run -c Release -- --benchmark json --dataset large --json-group all");
     AnsiConsole.MarkupLine("  dotnet run -c Release -- --benchmark json --dataset small --json-group parser");
     AnsiConsole.MarkupLine("  dotnet run -c Release -- --benchmark json --dataset small --json-group endtoend");

@@ -36,7 +36,18 @@ public static class BenchmarkScenarioRegistry
                 "Learn safe defaults for high-volume payload processing."
             ],
             IsImplemented: true,
-            "Implements parser-only and end-to-end JSON processing comparisons over deterministic payload fixtures.")
+            "Implements parser-only and end-to-end JSON processing comparisons over deterministic payload fixtures."),
+        new(
+            BenchmarkScenarioId.AsyncIo,
+            "Async I/O — Retail API batch processing",
+            "Compare sequential async, Task.WhenAll, SemaphoreSlim-bounded concurrency, and Parallel.ForEachAsync over deterministic local HTTP requests.",
+            [
+                "Understand I/O-bound async overlap versus CPU-bound parallelism.",
+                "Learn why Task.WhenAll is not a throttle.",
+                "Measure bounded concurrency back-pressure trade-offs."
+            ],
+            IsImplemented: true,
+            "Implements local loopback HTTP batch processing with deterministic responses, latency simulation, and concurrency instrumentation.")
     ];
 
     public static IReadOnlyList<BenchmarkScenario> GetAll() => Scenarios;

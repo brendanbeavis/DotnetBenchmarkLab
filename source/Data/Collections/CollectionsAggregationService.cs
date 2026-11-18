@@ -1,4 +1,5 @@
 using System.Collections.Concurrent;
+using System.Runtime.InteropServices;
 using DotNetPerformanceLab.Models;
 using DotNetPerformanceLab.Reporting.Collections;
 
@@ -69,9 +70,17 @@ public sealed class CollectionsAggregationService
         return BuildSummary(totalTransactionCount, totalUnits, grossSales, totalDiscounts, byCategory);
     }
 
-    public SalesSummary AggregateWithDictionary(IReadOnlyList<RetailTransaction> transactions)
+    public SalesSummary AggregateWithPresizedDictionary(IReadOnlyList<RetailTransaction> transactions, int estimatedCategoryCount)
     {
-        Dictionary<string, MutableCategoryAccumulator> byCategory = new(StringComparer.Ordinal);
+        if (estimatedCategoryCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(estimatedCategoryCount), estimatedCategoryCount, "Estimated category count must be zero or greater.");
+        }
+
+        Dictionary<string, MutableCategoryAccumulator> byCategory = estimatedCategoryCount == 0
+            ? new Dictionary<string, MutableCategoryAccumulator>(StringComparer.Ordinal)
+            : new Dictionary<string, MutableCategoryAccumulator>(estimatedCategoryCount, StringComparer.Ordinal);
+
         int totalUnits = 0;
         decimal grossSales = 0m;
         decimal totalDiscounts = 0m;
@@ -93,6 +102,47 @@ public sealed class CollectionsAggregationService
                 byCategory.Add(transaction.Category, accumulator);
             }
 
+            accumulator.TransactionCount++;
+            accumulator.TotalUnits += transaction.Quantity;
+            accumulator.GrossSales += lineGross;
+            accumulator.TotalDiscounts += lineDiscount;
+        }
+
+        return BuildSummary(transactions.Count, totalUnits, grossSales, totalDiscounts, byCategory);
+    }
+
+    public SalesSummary AggregateWithCollectionsMarshal(IReadOnlyList<RetailTransaction> transactions, int estimatedCategoryCount)
+    {
+        if (estimatedCategoryCount < 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(estimatedCategoryCount), estimatedCategoryCount, "Estimated category count must be zero or greater.");
+        }
+
+        Dictionary<string, MutableCategoryAccumulator> byCategory = estimatedCategoryCount == 0
+            ? new Dictionary<string, MutableCategoryAccumulator>(StringComparer.Ordinal)
+            : new Dictionary<string, MutableCategoryAccumulator>(estimatedCategoryCount, StringComparer.Ordinal);
+
+        int totalUnits = 0;
+        decimal grossSales = 0m;
+        decimal totalDiscounts = 0m;
+
+        foreach (RetailTransaction transaction in transactions)
+        {
+            totalUnits += transaction.Quantity;
+
+            decimal lineGross = transaction.UnitPrice * transaction.Quantity;
+            decimal lineDiscount = lineGross * transaction.DiscountPercent;
+
+            grossSales += lineGross;
+            totalDiscounts += lineDiscount;
+
+            ref MutableCategoryAccumulator? accumulatorRef = ref CollectionsMarshal.GetValueRefOrAddDefault(byCategory, transaction.Category, out bool exists);
+            if (!exists || accumulatorRef is null)
+            {
+                accumulatorRef = new MutableCategoryAccumulator(transaction.Category);
+            }
+
+            MutableCategoryAccumulator accumulator = accumulatorRef ?? throw new InvalidOperationException("Category accumulator should always be initialized.");
             accumulator.TransactionCount++;
             accumulator.TotalUnits += transaction.Quantity;
             accumulator.GrossSales += lineGross;
@@ -227,7 +277,8 @@ public sealed class CollectionsAggregationService
     {
         CollectionsAggregationApproach.Linq => AggregateWithLinq(transactions),
         CollectionsAggregationApproach.Foreach => AggregateWithForeach(transactions),
-        CollectionsAggregationApproach.Dictionary => AggregateWithDictionary(transactions),
+        CollectionsAggregationApproach.PresizedDictionary => AggregateWithPresizedDictionary(transactions, estimatedCategoryCount: 0),
+        CollectionsAggregationApproach.CollectionsMarshal => AggregateWithCollectionsMarshal(transactions, estimatedCategoryCount: 0),
         CollectionsAggregationApproach.ParallelFor => AggregateWithParallelFor(transactions),
         CollectionsAggregationApproach.Plinq => AggregateWithPlinq(transactions),
         _ => throw new ArgumentOutOfRangeException(nameof(approach), approach, "Unsupported collections aggregation approach.")

@@ -17,13 +17,16 @@ public class CollectionAggregationBenchmarks
 
     private IReadOnlyList<RetailTransaction> _transactions = [];
     private CollectionsAggregationService _service = null!;
+    private int _estimatedCategoryCardinality;
 
     [GlobalSetup]
     public void Setup()
     {
         DatasetSize datasetSize = Enum.Parse<DatasetSize>(Dataset, ignoreCase: true);
+        CollectionDatasetProfile profile = CollectionDatasetProfiles.Get(datasetSize);
         CollectionDatasetFixture fixture = CollectionDatasetGenerator.Create(datasetSize);
         _transactions = fixture.Transactions;
+        _estimatedCategoryCardinality = profile.CategoryCardinality;
         _service = new CollectionsAggregationService();
     }
 
@@ -42,10 +45,17 @@ public class CollectionAggregationBenchmarks
     }
 
     [Benchmark]
-    [BenchmarkCategory("Collections", "Intermediate")]
-    public SalesSummary DictionaryAggregation()
+    [BenchmarkCategory("Collections", "Advanced")]
+    public SalesSummary PresizedDictionary()
     {
-        return _service.AggregateWithDictionary(_transactions);
+        return _service.AggregateWithPresizedDictionary(_transactions, _estimatedCategoryCardinality);
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("Collections", "Advanced")]
+    public SalesSummary CollectionsMarshal()
+    {
+        return _service.AggregateWithCollectionsMarshal(_transactions, _estimatedCategoryCardinality);
     }
 
     [Benchmark]

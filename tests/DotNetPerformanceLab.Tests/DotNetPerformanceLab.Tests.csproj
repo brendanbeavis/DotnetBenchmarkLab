@@ -19,7 +19,7 @@
   </ItemGroup>
 
   <ItemGroup>
-    <ProjectReference Include="..\..\BenchmarkLab\BenchmarkLab.csproj" />
+    <ProjectReference Include="..\..\source\BenchmarkLab.csproj" />
   </ItemGroup>
 
 </Project>

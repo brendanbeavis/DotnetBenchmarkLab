@@ -19,6 +19,10 @@ Authoritative measurements are produced by BenchmarkDotNet.
 
 Each scenario includes Basic, Intermediate, and Advanced approaches with correctness-equivalence tests.
 
+For the JSON scenario, in-memory typed deserialization benchmarks and stream-input incremental parsing benchmarks are reported as separate benchmark types.
+
+For the collections scenario, Basic/Intermediate/Advanced compare distinct strategies: LINQ GroupBy readability, single-pass dictionary aggregation, capacity-aware/CollectionsMarshal dictionary tuning, and parallel CPU aggregation.
+
 ## Prerequisites
 
 - .NET 10 SDK
@@ -48,6 +52,8 @@ dotnet test BenchmarkLab.slnx -c Release
 dotnet run --project BenchmarkLab/BenchmarkLab.csproj
 ```
 
+Interactive mode shows a **What are we benchmarking?** preview before final run confirmation. It lists business problem, deterministic dataset characteristics, exact benchmark method names, measured operation scope, and excluded setup work.
+
 ## Run benchmarks directly (CLI mode)
 
 ```bash
@@ -70,7 +76,11 @@ BenchmarkDotNet exporters generate:
 - Markdown report
 - CSV report
 
+The app also prints a supplementary **Performance Lab Summary** after each run to provide a quick, beginner-friendly comparison of time and managed allocation metrics. BenchmarkDotNet native reports remain the authoritative detailed source.
+
 Reports are discovered from `BenchmarkDotNet.Artifacts/results` candidate locations (current working directory and app-base fallback), and listed in the terminal UI sorted by modification time.
+
+For the Database (SQLite) scenario, benchmark fixtures create unique temporary database files under the OS temp directory and remove owned `.db`, `-wal`, and `-shm` files during fixture cleanup after correctness checks and benchmark runs.
 
 ## Documentation
 

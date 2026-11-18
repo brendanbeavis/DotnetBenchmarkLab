@@ -5,4 +5,5 @@ namespace DotNetPerformanceLab.Data.Json;
 public sealed record JsonPayloadFixture(
     DatasetSize DatasetSize,
     byte[] PayloadUtf8,
-    string PayloadText);
+    string PayloadText,
+    int TotalLineItemCount);

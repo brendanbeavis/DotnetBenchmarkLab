@@ -47,12 +47,6 @@ public class JsonPayloadParsingBenchmarks
         return _service.ParseOnlySystemTextJsonSourceGenerated(_payloadUtf8);
     }
 
-    [Benchmark]
-    [BenchmarkCategory("Json", "Advanced", "ParserOnly")]
-    public JsonParserOnlyResultDto SystemTextJsonStreamingParserOnly()
-    {
-        return _service.ParseOnlySystemTextJsonStreaming(_payloadUtf8);
-    }
 }
 
 [MemoryDiagnoser]
@@ -96,10 +90,66 @@ public class JsonPayloadEndToEndBenchmarks
         return _service.ProcessSystemTextJsonSourceGenerated(_payloadUtf8);
     }
 
-    [Benchmark]
-    [BenchmarkCategory("Json", "Advanced", "EndToEnd")]
-    public JsonProcessingResultDto SystemTextJsonStreamingEndToEnd()
+}
+
+[MemoryDiagnoser]
+public class JsonPayloadStreamingParsingBenchmarks
+{
+    private const int StreamingReadBufferSizeBytes = 16 * 1024;
+
+    [ParamsSource(nameof(DatasetSizes))]
+    public string Dataset { get; set; } = nameof(DatasetSize.Medium);
+
+    public IEnumerable<string> DatasetSizes => [BenchmarkConventions.ToParameterValue(BenchmarkRuntimeContext.DatasetSize)];
+
+    private JsonPayloadProcessingService _service = null!;
+    private byte[] _payloadUtf8 = [];
+
+    [GlobalSetup]
+    public void Setup()
     {
-        return _service.ProcessSystemTextJsonStreaming(_payloadUtf8);
+        DatasetSize datasetSize = Enum.Parse<DatasetSize>(Dataset, ignoreCase: true);
+        JsonPayloadFixture fixture = JsonPayloadFixtureGenerator.Create(datasetSize);
+        _payloadUtf8 = fixture.PayloadUtf8;
+        _service = new JsonPayloadProcessingService();
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("Json", "Advanced", "ParserOnly", "StreamInput")]
+    public JsonParserOnlyResultDto SystemTextJsonStreamingParserOnlyStreamInput()
+    {
+        using Stream payloadStream = JsonPayloadStreamFactory.CreateReadOnly(_payloadUtf8);
+        return _service.ParseOnlySystemTextJsonStreaming(payloadStream, StreamingReadBufferSizeBytes);
+    }
+}
+
+[MemoryDiagnoser]
+public class JsonPayloadStreamingEndToEndBenchmarks
+{
+    private const int StreamingReadBufferSizeBytes = 16 * 1024;
+
+    [ParamsSource(nameof(DatasetSizes))]
+    public string Dataset { get; set; } = nameof(DatasetSize.Medium);
+
+    public IEnumerable<string> DatasetSizes => [BenchmarkConventions.ToParameterValue(BenchmarkRuntimeContext.DatasetSize)];
+
+    private JsonPayloadProcessingService _service = null!;
+    private byte[] _payloadUtf8 = [];
+
+    [GlobalSetup]
+    public void Setup()
+    {
+        DatasetSize datasetSize = Enum.Parse<DatasetSize>(Dataset, ignoreCase: true);
+        JsonPayloadFixture fixture = JsonPayloadFixtureGenerator.Create(datasetSize);
+        _payloadUtf8 = fixture.PayloadUtf8;
+        _service = new JsonPayloadProcessingService();
+    }
+
+    [Benchmark]
+    [BenchmarkCategory("Json", "Advanced", "EndToEnd", "StreamInput")]
+    public JsonProcessingResultDto SystemTextJsonStreamingEndToEndStreamInput()
+    {
+        using Stream payloadStream = JsonPayloadStreamFactory.CreateReadOnly(_payloadUtf8);
+        return _service.ProcessSystemTextJsonStreaming(payloadStream, StreamingReadBufferSizeBytes);
     }
 }

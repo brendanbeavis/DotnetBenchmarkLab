@@ -6,8 +6,9 @@ public sealed record BenchmarkRunOptions(
     BenchmarkScenarioId? ScenarioId,
     DatasetSize DatasetSize,
     JsonBenchmarkGroup JsonGroup,
-    bool IsHelpRequested)
+    bool IsHelpRequested,
+    bool SkipPreflight)
 {
     public static BenchmarkRunOptions InteractiveDefault { get; } =
-        new(IsBenchmarkMode: false, RunAllScenarios: false, ScenarioId: null, DatasetSize.Medium, JsonBenchmarkGroup.All, IsHelpRequested: false);
+        new(IsBenchmarkMode: false, RunAllScenarios: false, ScenarioId: null, DatasetSize.Medium, JsonBenchmarkGroup.All, IsHelpRequested: false, SkipPreflight: false);
 }

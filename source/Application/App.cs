@@ -10,10 +10,20 @@ namespace DotNetPerformanceLab.Application;
 public sealed class App
 {
     private readonly BenchmarkRunnerService _benchmarkRunnerService;
+    private readonly IBenchmarkPreflightService _benchmarkPreflightService;
+    private readonly IBenchmarkPreflightRenderer _benchmarkPreflightRenderer;
+    private readonly IBenchmarkWorkloadPreviewBuilder _benchmarkWorkloadPreviewBuilder;
 
-    public App(BenchmarkRunnerService benchmarkRunnerService)
+    public App(
+        BenchmarkRunnerService benchmarkRunnerService,
+        IBenchmarkPreflightService? benchmarkPreflightService = null,
+        IBenchmarkPreflightRenderer? benchmarkPreflightRenderer = null,
+        IBenchmarkWorkloadPreviewBuilder? benchmarkWorkloadPreviewBuilder = null)
     {
         _benchmarkRunnerService = benchmarkRunnerService;
+        _benchmarkPreflightService = benchmarkPreflightService ?? new BenchmarkPreflightService();
+        _benchmarkPreflightRenderer = benchmarkPreflightRenderer ?? new SpectreBenchmarkPreflightRenderer();
+        _benchmarkWorkloadPreviewBuilder = benchmarkWorkloadPreviewBuilder ?? new BenchmarkWorkloadPreviewBuilder();
     }
 
     public async Task<int> RunAsync(CancellationToken cancellationToken = default)
@@ -82,15 +92,9 @@ public sealed class App
         ShowScenarioDetails(selectedScenario);
 
         DatasetSize datasetSize = PromptDatasetSize();
-
-        ShowRunSummary(selectedScenario, datasetSize, runAll: false);
-
-        if (!AnsiConsole.Confirm("Proceed?", defaultValue: false))
-        {
-            AnsiConsole.MarkupLine("[yellow]Run cancelled.[/]");
-            WaitForMenuReturn();
-            return;
-        }
+        JsonBenchmarkGroup jsonGroup = selectedScenario.Id == BenchmarkScenarioId.Json
+            ? PromptJsonGroup()
+            : JsonBenchmarkGroup.All;
 
         if (!selectedScenario.IsImplemented)
         {
@@ -99,14 +103,44 @@ public sealed class App
             return;
         }
 
-        if (selectedScenario.Id == BenchmarkScenarioId.Json)
+        BenchmarkRunOptions scenarioOptions = new(
+            IsBenchmarkMode: true,
+            RunAllScenarios: false,
+            ScenarioId: selectedScenario.Id,
+            DatasetSize: datasetSize,
+            JsonGroup: jsonGroup,
+            IsHelpRequested: false,
+            SkipPreflight: false);
+
+        ShowRunSummary(selectedScenario, datasetSize, runAll: false);
+        ShowWhatAreWeBenchmarkingPreview(scenarioOptions);
+
+        if (!AnsiConsole.Confirm("Proceed?", defaultValue: false))
         {
-            JsonBenchmarkGroup jsonGroup = PromptJsonGroup();
-            await LaunchBenchmarkProcessAsync($"--benchmark json --dataset {datasetSize.ToString().ToLowerInvariant()} --json-group {ToCliJsonGroup(jsonGroup)}", cancellationToken);
+            AnsiConsole.MarkupLine("[yellow]Run cancelled.[/]");
+            WaitForMenuReturn();
             return;
         }
 
-        await LaunchBenchmarkProcessAsync($"--benchmark {selectedScenario.Id.ToString().ToLowerInvariant()} --dataset {datasetSize.ToString().ToLowerInvariant()}", cancellationToken);
+        if (selectedScenario.Id == BenchmarkScenarioId.Json)
+        {
+            if (!RunCorrectnessPreflightOrCancel(scenarioOptions))
+            {
+                WaitForMenuReturn();
+                return;
+            }
+
+            await LaunchBenchmarkProcessAsync($"--benchmark json --dataset {datasetSize.ToString().ToLowerInvariant()} --json-group {ToCliJsonGroup(jsonGroup)} --skip-preflight", cancellationToken);
+            return;
+        }
+
+        if (!RunCorrectnessPreflightOrCancel(scenarioOptions))
+        {
+            WaitForMenuReturn();
+            return;
+        }
+
+        await LaunchBenchmarkProcessAsync($"--benchmark {selectedScenario.Id.ToString().ToLowerInvariant()} --dataset {datasetSize.ToString().ToLowerInvariant()} --skip-preflight", cancellationToken);
     }
 
     private async Task HandleRunAllScenariosAsync(CancellationToken cancellationToken)
@@ -122,13 +156,6 @@ public sealed class App
 
         ShowRunSummary(allScenarioSummary, datasetSize, runAll: true);
 
-        if (!AnsiConsole.Confirm("Proceed?", defaultValue: false))
-        {
-            AnsiConsole.MarkupLine("[yellow]Run cancelled.[/]");
-            WaitForMenuReturn();
-            return;
-        }
-
         if (!allScenarioSummary.IsImplemented)
         {
             AnsiConsole.MarkupLine($"[yellow]{allScenarioSummary.StatusNote}[/]");
@@ -136,7 +163,111 @@ public sealed class App
             return;
         }
 
-        await LaunchBenchmarkProcessAsync($"--benchmark all --dataset {datasetSize.ToString().ToLowerInvariant()}", cancellationToken);
+        BenchmarkRunOptions options = new(
+            IsBenchmarkMode: true,
+            RunAllScenarios: true,
+            ScenarioId: null,
+            DatasetSize: datasetSize,
+            JsonGroup: JsonBenchmarkGroup.All,
+            IsHelpRequested: false,
+            SkipPreflight: false);
+
+        ShowWhatAreWeBenchmarkingPreview(options);
+
+        if (!AnsiConsole.Confirm("Proceed?", defaultValue: false))
+        {
+            AnsiConsole.MarkupLine("[yellow]Run cancelled.[/]");
+            WaitForMenuReturn();
+            return;
+        }
+
+        if (!RunCorrectnessPreflightOrCancel(options))
+        {
+            WaitForMenuReturn();
+            return;
+        }
+
+        await LaunchBenchmarkProcessAsync($"--benchmark all --dataset {datasetSize.ToString().ToLowerInvariant()} --skip-preflight", cancellationToken);
+    }
+
+    private bool RunCorrectnessPreflightOrCancel(BenchmarkRunOptions options)
+    {
+        BenchmarkPreflightResult result = _benchmarkPreflightService.Validate(options);
+        _benchmarkPreflightRenderer.Render(result);
+        if (result.IsSuccess)
+        {
+            return true;
+        }
+
+        AnsiConsole.MarkupLine("[red]Benchmark launch was cancelled because correctness preflight failed.[/]");
+        return false;
+    }
+
+    private void ShowWhatAreWeBenchmarkingPreview(BenchmarkRunOptions options)
+    {
+        BenchmarkWorkloadPreview preview = _benchmarkWorkloadPreviewBuilder.Build(options);
+
+        AnsiConsole.Write(new Rule("[bold cyan]What are we benchmarking?[/]").RuleStyle("grey"));
+
+        foreach (ScenarioWorkloadPreview scenario in preview.Scenarios)
+        {
+            AnsiConsole.Write(new Panel($"[bold]{scenario.BusinessProblem.EscapeMarkup()}[/]")
+                .Header($"{scenario.ScenarioName}")
+                .Border(BoxBorder.Rounded));
+
+            Table datasetTable = new();
+            datasetTable.Border = TableBorder.Minimal;
+            datasetTable.AddColumn("Input dataset");
+            datasetTable.AddColumn("Value");
+            foreach ((string label, string value) in scenario.InputDataset)
+            {
+                datasetTable.AddRow(label, value);
+            }
+
+            AnsiConsole.Write(datasetTable);
+
+            Table methodsTable = new();
+            methodsTable.Border = TableBorder.Minimal;
+            methodsTable.AddColumn("Methods compared");
+            methodsTable.AddColumn("How it works");
+            methodsTable.AddColumn("Trade-off");
+            foreach (BenchmarkMethodPreview method in scenario.MethodsCompared)
+            {
+                methodsTable.AddRow(method.MethodName, method.Description, method.TradeoffNote);
+            }
+
+            AnsiConsole.Write(methodsTable);
+
+            ShowBulletSection("Workload shape", scenario.WorkloadShape);
+            ShowBulletSection("What is included", scenario.Included);
+            ShowBulletSection("What is excluded", scenario.Excluded);
+            ShowBulletSection("Expected considerations", scenario.ExpectedConsiderations);
+
+            Table settingsTable = new();
+            settingsTable.Border = TableBorder.Minimal;
+            settingsTable.AddColumn("Run settings");
+            settingsTable.AddColumn("Value");
+            foreach ((string label, string value) in scenario.RunSettings)
+            {
+                settingsTable.AddRow(label, value);
+            }
+
+            AnsiConsole.Write(settingsTable);
+            AnsiConsole.WriteLine();
+        }
+    }
+
+    private static void ShowBulletSection(string title, IReadOnlyList<string> lines)
+    {
+        Grid grid = new();
+        grid.AddColumn();
+        grid.AddRow($"[bold]{title}[/]");
+        foreach (string line in lines)
+        {
+            grid.AddRow($"- {line}");
+        }
+
+        AnsiConsole.Write(grid);
     }
 
     private static void ShowScenarioDetails(BenchmarkScenario scenario)
@@ -159,9 +290,10 @@ public sealed class App
             collectionsGrid.AddColumn();
             collectionsGrid.AddRow("[bold]Business problem:[/] aggregate retail transactions into totals, monetary metrics, and category groupings.");
             collectionsGrid.AddRow("[bold]Output:[/] transaction count, units sold, gross/discount/net sales, category sales and category counts.");
-            collectionsGrid.AddRow("[bold]Basic:[/] LINQ aggregation.");
-            collectionsGrid.AddRow("[bold]Intermediate:[/] foreach loop, dictionary aggregation.");
-            collectionsGrid.AddRow("[bold]Advanced:[/] Parallel.For with thread-local state, PLINQ aggregate.");
+            collectionsGrid.AddRow("[bold]Basic:[/] LINQ GroupBy for readability-first aggregation.");
+            collectionsGrid.AddRow("[bold]Intermediate:[/] single-pass foreach with dictionary accumulation.");
+            collectionsGrid.AddRow("[bold]Advanced:[/] pre-sized dictionary, CollectionsMarshal dictionary ref access, Parallel.For, and PLINQ aggregate.");
+            collectionsGrid.AddRow("[bold]Trade-off:[/] advanced variants can reduce lookup/allocation overhead or use CPU parallelism, but extra complexity or overhead may outweigh gains on smaller datasets.");
             collectionsGrid.AddRow("[yellow]Large datasets with parallel variants may take longer depending on CPU and memory pressure.[/]");
             AnsiConsole.Write(new Panel(collectionsGrid).Header("Collections scenario").Border(BoxBorder.Rounded));
             return;
@@ -175,7 +307,8 @@ public sealed class App
             jsonGrid.AddRow("[bold]Groups:[/] parser-only and end-to-end processing.");
             jsonGrid.AddRow("[bold]Basic:[/] Newtonsoft.Json typed deserialization.");
             jsonGrid.AddRow("[bold]Intermediate:[/] System.Text.Json standard typed deserialization.");
-            jsonGrid.AddRow("[bold]Advanced:[/] System.Text.Json source generation and streaming order processing.");
+            jsonGrid.AddRow("[bold]Advanced:[/] System.Text.Json source generation plus dedicated stream-input incremental order processing.");
+            jsonGrid.AddRow("[bold]Methodology:[/] in-memory typed comparisons are reported separately from stream-input parsing/processing.");
             jsonGrid.AddRow("[yellow]Large payloads can significantly increase memory pressure and run time.[/]");
             AnsiConsole.Write(new Panel(jsonGrid).Header("JSON scenario").Border(BoxBorder.Rounded));
         }

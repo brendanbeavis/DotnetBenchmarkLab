@@ -12,18 +12,19 @@ public sealed class CollectionsCorrectnessVerifier
         _aggregationService = aggregationService;
     }
 
-    public CollectionsCorrectnessVerificationResult VerifyAllEquivalent(IReadOnlyList<RetailTransaction> transactions, decimal decimalTolerance = 0.01m)
+    public CollectionsCorrectnessVerificationResult VerifyAllEquivalent(IReadOnlyList<RetailTransaction> transactions, int estimatedCategoryCardinality = 0, decimal decimalTolerance = 0.01m)
     {
         Dictionary<CollectionsAggregationApproach, SalesSummary> results = new()
         {
             [CollectionsAggregationApproach.Linq] = _aggregationService.AggregateWithLinq(transactions),
             [CollectionsAggregationApproach.Foreach] = _aggregationService.AggregateWithForeach(transactions),
-            [CollectionsAggregationApproach.Dictionary] = _aggregationService.AggregateWithDictionary(transactions),
+            [CollectionsAggregationApproach.PresizedDictionary] = _aggregationService.AggregateWithPresizedDictionary(transactions, estimatedCategoryCardinality),
+            [CollectionsAggregationApproach.CollectionsMarshal] = _aggregationService.AggregateWithCollectionsMarshal(transactions, estimatedCategoryCardinality),
             [CollectionsAggregationApproach.ParallelFor] = _aggregationService.AggregateWithParallelFor(transactions),
             [CollectionsAggregationApproach.Plinq] = _aggregationService.AggregateWithPlinq(transactions)
         };
 
-        SalesSummary baseline = results[CollectionsAggregationApproach.Foreach];
+        SalesSummary baseline = results[CollectionsAggregationApproach.Linq];
         foreach ((CollectionsAggregationApproach approach, SalesSummary candidate) in results)
         {
             AssertEquivalent(baseline, candidate, approach, decimalTolerance);

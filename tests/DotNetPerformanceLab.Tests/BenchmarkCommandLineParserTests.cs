@@ -13,6 +13,7 @@ public class BenchmarkCommandLineParserTests
         Assert.Null(error);
         Assert.False(options.IsBenchmarkMode);
         Assert.Equal(DatasetSize.Medium, options.DatasetSize);
+        Assert.False(options.SkipPreflight);
     }
 
     [Fact]
@@ -74,5 +75,15 @@ public class BenchmarkCommandLineParserTests
 
         Assert.False(parsed);
         Assert.NotNull(error);
+    }
+
+    [Fact]
+    public void TryParse_SkipPreflightFlag_IsParsed()
+    {
+        bool parsed = BenchmarkCommandLineParser.TryParse(["--benchmark", "collections", "--dataset", "small", "--skip-preflight"], out BenchmarkRunOptions options, out string? error);
+
+        Assert.True(parsed);
+        Assert.Null(error);
+        Assert.True(options.SkipPreflight);
     }
 }

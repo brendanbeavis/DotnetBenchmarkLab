@@ -20,6 +20,7 @@ public static class BenchmarkCommandLineParser
 
         DatasetSize datasetSize = DatasetSize.Medium;
         JsonBenchmarkGroup jsonGroup = JsonBenchmarkGroup.All;
+        bool skipPreflight = false;
         bool benchmarkMode = false;
         bool runAll = false;
         BenchmarkScenarioId? scenario = null;
@@ -28,11 +29,17 @@ public static class BenchmarkCommandLineParser
         {
             string arg = args[index];
 
+            if (string.Equals(arg, "--skip-preflight", StringComparison.OrdinalIgnoreCase))
+            {
+                skipPreflight = true;
+                continue;
+            }
+
             if (string.Equals(arg, "--benchmark", StringComparison.OrdinalIgnoreCase))
             {
                 if (index + 1 >= args.Length)
                 {
-                    error = "Missing benchmark target. Use --benchmark all|database|collections|json.";
+                    error = "Missing benchmark target. Use --benchmark all|database|collections|json|asyncio.";
                     return false;
                 }
 
@@ -48,7 +55,7 @@ public static class BenchmarkCommandLineParser
 
                 if (!TryParseScenario(benchmarkTarget, out BenchmarkScenarioId parsedScenario))
                 {
-                    error = $"Invalid benchmark target '{benchmarkTarget}'. Use all|database|collections|json.";
+                    error = $"Invalid benchmark target '{benchmarkTarget}'. Use all|database|collections|json|asyncio.";
                     return false;
                 }
 
@@ -109,7 +116,8 @@ public static class BenchmarkCommandLineParser
             ScenarioId: scenario,
             DatasetSize: datasetSize,
             JsonGroup: jsonGroup,
-            IsHelpRequested: false);
+            IsHelpRequested: false,
+            SkipPreflight: skipPreflight);
 
         return true;
     }
@@ -121,12 +129,14 @@ public static class BenchmarkCommandLineParser
             "database" => BenchmarkScenarioId.Database,
             "collections" => BenchmarkScenarioId.Collections,
             "json" => BenchmarkScenarioId.Json,
+            "asyncio" => BenchmarkScenarioId.AsyncIo,
             _ => default
         };
 
         return token.Equals("database", StringComparison.OrdinalIgnoreCase)
             || token.Equals("collections", StringComparison.OrdinalIgnoreCase)
-            || token.Equals("json", StringComparison.OrdinalIgnoreCase);
+            || token.Equals("json", StringComparison.OrdinalIgnoreCase)
+            || token.Equals("asyncio", StringComparison.OrdinalIgnoreCase);
     }
 
     private static bool TryParseJsonGroup(string token, out JsonBenchmarkGroup group)

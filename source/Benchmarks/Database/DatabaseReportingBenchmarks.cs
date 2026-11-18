@@ -18,14 +18,21 @@ public class DatabaseReportingBenchmarks
 
     private DatabaseReportingQueryService _queryService = null!;
     private DatabaseReportQuery _query = null!;
+    private RetailDatabaseFixture _fixture = null!;
 
     [GlobalSetup]
     public void Setup()
     {
         DatasetSize datasetSize = Enum.Parse<DatasetSize>(Dataset, ignoreCase: true);
-        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(datasetSize);
-        _queryService = new DatabaseReportingQueryService(fixture);
-        _query = fixture.ReportQuery;
+        _fixture = RetailDatabaseFixtureFactory.Create(datasetSize);
+        _queryService = new DatabaseReportingQueryService(_fixture);
+        _query = _fixture.ReportQuery;
+    }
+
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        _fixture.Dispose();
     }
 
     [Benchmark(Baseline = true)]
@@ -56,14 +63,21 @@ public class DatabaseReportingProjectionBenchmarks
 
     private DatabaseReportingQueryService _queryService = null!;
     private DatabaseReportQuery _query = null!;
+    private RetailDatabaseFixture _fixture = null!;
 
     [GlobalSetup]
     public void Setup()
     {
         DatasetSize datasetSize = Enum.Parse<DatasetSize>(Dataset, ignoreCase: true);
-        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(datasetSize);
-        _queryService = new DatabaseReportingQueryService(fixture);
-        _query = fixture.ReportQuery;
+        _fixture = RetailDatabaseFixtureFactory.Create(datasetSize);
+        _queryService = new DatabaseReportingQueryService(_fixture);
+        _query = _fixture.ReportQuery;
+    }
+
+    [GlobalCleanup]
+    public void Cleanup()
+    {
+        _fixture.Dispose();
     }
 
     [Benchmark(Baseline = true)]

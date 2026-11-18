@@ -47,13 +47,19 @@ public sealed class JsonPayloadProcessingService
 
     public JsonParserOnlyResultDto ParseOnlySystemTextJsonStreaming(byte[] payloadUtf8)
     {
+        using MemoryStream payloadStream = CreateReadOnlyPayloadStream(payloadUtf8);
+        return ParseOnlySystemTextJsonStreaming(payloadStream);
+    }
+
+    public JsonParserOnlyResultDto ParseOnlySystemTextJsonStreaming(Stream payloadStream, int readBufferSize = 16 * 1024)
+    {
         int orderCount = 0;
         int totalLineItems = 0;
         int totalUnits = 0;
         decimal grossSales = 0m;
         decimal discountTotal = 0m;
 
-        ForEachStreamedOrder(payloadUtf8, order =>
+        ForEachStreamedOrder(payloadStream, readBufferSize, order =>
         {
             orderCount++;
             totalLineItems += order.LineItems.Count;
@@ -94,12 +100,18 @@ public sealed class JsonPayloadProcessingService
 
     public JsonProcessingResultDto ProcessSystemTextJsonStreaming(byte[] payloadUtf8)
     {
+        using MemoryStream payloadStream = CreateReadOnlyPayloadStream(payloadUtf8);
+        return ProcessSystemTextJsonStreaming(payloadStream);
+    }
+
+    public JsonProcessingResultDto ProcessSystemTextJsonStreaming(Stream payloadStream, int readBufferSize = 16 * 1024)
+    {
         List<JsonOrderResponseDto> transformedOrders = [];
         int totalUnits = 0;
         decimal grossSales = 0m;
         decimal discountTotal = 0m;
 
-        ForEachStreamedOrder(payloadUtf8, order =>
+        ForEachStreamedOrder(payloadStream, readBufferSize, order =>
         {
             JsonOrderResponseDto transformed = TransformOrder(order);
             transformedOrders.Add(transformed);
@@ -212,33 +224,87 @@ public sealed class JsonPayloadProcessingService
             distinctProducts.Count);
     }
 
-    private static void ForEachStreamedOrder(byte[] payloadUtf8, Action<ApiOrderDto> onOrder)
+    private static MemoryStream CreateReadOnlyPayloadStream(byte[] payloadUtf8)
     {
-        Utf8JsonReader reader = new(payloadUtf8, isFinalBlock: true, state: default);
+        return new MemoryStream(payloadUtf8, writable: false);
+    }
 
-        while (reader.Read())
+    private static void ForEachStreamedOrder(Stream payloadStream, int readBufferSize, Action<ApiOrderDto> onOrder)
+    {
+        ArgumentNullException.ThrowIfNull(payloadStream);
+        ArgumentNullException.ThrowIfNull(onOrder);
+
+        if (!payloadStream.CanRead)
         {
-            if (reader.TokenType != JsonTokenType.PropertyName)
-            {
-                continue;
-            }
+            throw new ArgumentException("The payload stream must be readable.", nameof(payloadStream));
+        }
 
-            if (!reader.ValueTextEquals("orders"u8))
-            {
-                continue;
-            }
+        if (readBufferSize <= 0)
+        {
+            throw new ArgumentOutOfRangeException(nameof(readBufferSize), readBufferSize, "Read buffer size must be greater than zero.");
+        }
 
-            reader.Read();
-            if (reader.TokenType != JsonTokenType.StartArray)
-            {
-                return;
-            }
+        byte[] readBuffer = new byte[readBufferSize];
+        int bytesInBuffer = 0;
+        JsonReaderState readerState = default;
+        bool ordersPropertyFound = false;
+        bool insideOrdersArray = false;
+        bool ordersArrayCompleted = false;
+        bool sawAnyToken = false;
 
-            while (reader.Read())
+        while (true)
+        {
+            int readCount = payloadStream.Read(readBuffer.AsSpan(bytesInBuffer));
+            bool isFinalBlock = readCount == 0;
+            bytesInBuffer += readCount;
+
+            Utf8JsonReader reader = new(readBuffer.AsSpan(0, bytesInBuffer), isFinalBlock, readerState);
+            int? rewindConsumedTo = null;
+            bool hasRewindState = false;
+            JsonReaderState rewindReaderState = default;
+
+            while (true)
             {
+                JsonReaderState stateBeforeRead = reader.CurrentState;
+                long bytesConsumedBeforeRead = reader.BytesConsumed;
+                if (!reader.Read())
+                {
+                    break;
+                }
+
+                sawAnyToken = true;
+
+                if (!ordersPropertyFound)
+                {
+                    if (reader.TokenType == JsonTokenType.PropertyName && reader.ValueTextEquals("orders"u8))
+                    {
+                        ordersPropertyFound = true;
+                    }
+
+                    continue;
+                }
+
+                if (!insideOrdersArray)
+                {
+                    if (ordersArrayCompleted)
+                    {
+                        continue;
+                    }
+
+                    if (reader.TokenType != JsonTokenType.StartArray)
+                    {
+                        throw new System.Text.Json.JsonException("The 'orders' property value must be a JSON array.");
+                    }
+
+                    insideOrdersArray = true;
+                    continue;
+                }
+
                 if (reader.TokenType == JsonTokenType.EndArray)
                 {
-                    return;
+                    insideOrdersArray = false;
+                    ordersArrayCompleted = true;
+                    continue;
                 }
 
                 if (reader.TokenType != JsonTokenType.StartObject)
@@ -246,13 +312,56 @@ public sealed class JsonPayloadProcessingService
                     continue;
                 }
 
-                using JsonDocument orderDocument = JsonDocument.ParseValue(ref reader);
-                byte[] orderBytes = Encoding.UTF8.GetBytes(orderDocument.RootElement.GetRawText());
-                ApiOrderDto? order = System.Text.Json.JsonSerializer.Deserialize(orderBytes, JsonSerializationContexts.Default.ApiOrderDto);
+                Utf8JsonReader orderReader = reader;
+                ApiOrderDto? order;
+                try
+                {
+                    order = System.Text.Json.JsonSerializer.Deserialize(ref orderReader, JsonSerializationContexts.Default.ApiOrderDto);
+                }
+                catch (System.Text.Json.JsonException) when (!isFinalBlock)
+                {
+                    rewindConsumedTo = (int)bytesConsumedBeforeRead;
+                    rewindReaderState = stateBeforeRead;
+                    hasRewindState = true;
+                    break;
+                }
+
+                reader = orderReader;
                 if (order is not null)
                 {
                     onOrder(order);
                 }
+            }
+
+            int consumed = rewindConsumedTo ?? (int)reader.BytesConsumed;
+            int remaining = bytesInBuffer - consumed;
+            if (remaining > 0)
+            {
+                Buffer.BlockCopy(readBuffer, consumed, readBuffer, 0, remaining);
+            }
+
+            bytesInBuffer = remaining;
+            readerState = hasRewindState ? rewindReaderState : reader.CurrentState;
+
+            if (isFinalBlock)
+            {
+                if (!sawAnyToken)
+                {
+                    throw new System.Text.Json.JsonException("Empty JSON payload.");
+                }
+
+                if (bytesInBuffer > 0)
+                {
+                    throw new System.Text.Json.JsonException("Incomplete JSON payload.");
+                }
+
+                return;
+            }
+
+            if (bytesInBuffer == readBuffer.Length)
+            {
+                int nextSize = checked(readBuffer.Length * 2);
+                Array.Resize(ref readBuffer, nextSize);
             }
         }
     }

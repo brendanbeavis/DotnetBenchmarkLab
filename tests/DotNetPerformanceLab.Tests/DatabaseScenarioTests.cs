@@ -1,5 +1,7 @@
 using DotNetPerformanceLab.Benchmarking;
 using DotNetPerformanceLab.Data.Database;
+using DotNetPerformanceLab.Benchmarks.Database;
+using Microsoft.Data.Sqlite;
 using Microsoft.EntityFrameworkCore;
 
 namespace DotNetPerformanceLab.Tests;
@@ -9,8 +11,8 @@ public class DatabaseScenarioTests
     [Fact]
     public void Seeding_IsDeterministic_ForSmallDataset()
     {
-        RetailDatabaseFixture firstFixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
-        RetailDatabaseFixture secondFixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        using RetailDatabaseFixture firstFixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        using RetailDatabaseFixture secondFixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
 
         using RetailDbContext firstContext = firstFixture.CreateDbContext();
         using RetailDbContext secondContext = secondFixture.CreateDbContext();
@@ -57,7 +59,7 @@ public class DatabaseScenarioTests
     [Fact]
     public void SeededData_HasReferentialIntegrity()
     {
-        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        using RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
         using RetailDbContext dbContext = fixture.CreateDbContext();
 
         int orphanOrders = dbContext.Orders.Count(order => !dbContext.Customers.Any(customer => customer.Id == order.CustomerId));
@@ -72,7 +74,7 @@ public class DatabaseScenarioTests
     [Fact]
     public void AllImplementations_ReturnEquivalentResults()
     {
-        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        using RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
         DatabaseReportingQueryService queryService = new(fixture);
         DatabaseCorrectnessVerifier verifier = new(queryService);
 
@@ -84,7 +86,7 @@ public class DatabaseScenarioTests
     [Fact]
     public void Report_IsFilteredAndOrdered()
     {
-        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        using RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
         DatabaseReportingQueryService queryService = new(fixture);
 
         var report = queryService.RunEfProjection(fixture.ReportQuery);
@@ -116,5 +118,118 @@ public class DatabaseScenarioTests
     {
         RetailDatasetProfile profile = RetailDatasetProfiles.Get(datasetSize);
         Assert.Equal(expectedOrderCount, profile.OrderCount);
+    }
+
+    [Fact]
+    public void FixtureCreation_CreatesDatabaseFile_AndDisposeRemovesOwnedFiles()
+    {
+        string dbPath;
+        string walPath;
+        string shmPath;
+
+        using (RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small))
+        {
+            dbPath = fixture.DatabasePath;
+            walPath = dbPath + "-wal";
+            shmPath = dbPath + "-shm";
+
+            Assert.True(File.Exists(dbPath));
+
+            using RetailDbContext dbContext = fixture.CreateDbContext();
+            _ = dbContext.Orders.AsNoTracking().Take(1).ToArray();
+        }
+
+        Assert.False(File.Exists(dbPath));
+        Assert.False(File.Exists(walPath));
+        Assert.False(File.Exists(shmPath));
+    }
+
+    [Fact]
+    public void FixtureDispose_CanBeCalledTwice()
+    {
+        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        string dbPath = fixture.DatabasePath;
+
+        fixture.Dispose();
+        fixture.Dispose();
+
+        Assert.False(File.Exists(dbPath));
+        Assert.False(File.Exists(dbPath + "-wal"));
+        Assert.False(File.Exists(dbPath + "-shm"));
+    }
+
+    [Fact]
+    public void FixtureCreationFailure_CleansPartialDatabaseFiles()
+    {
+        string? capturedDbPath = null;
+
+        InvalidOperationException ex = Assert.Throws<InvalidOperationException>(() =>
+            RetailDatabaseFixtureFactory.Create(
+                DatasetSize.Small,
+                (context, profile, seed) =>
+                {
+                    SqliteConnectionStringBuilder builder = new(context.Database.GetConnectionString());
+                    capturedDbPath = builder.DataSource;
+                    throw new InvalidOperationException("Seed failure for test.");
+                }));
+
+        Assert.Equal("Seed failure for test.", ex.Message);
+        Assert.False(string.IsNullOrWhiteSpace(capturedDbPath));
+
+        Assert.False(File.Exists(capturedDbPath!));
+        Assert.False(File.Exists(capturedDbPath + "-wal"));
+        Assert.False(File.Exists(capturedDbPath + "-shm"));
+    }
+
+    [Fact]
+    public void DatabaseBenchmarks_GlobalCleanup_DisposesFixtureFiles()
+    {
+        DatabaseReportingBenchmarks benchmarks = new()
+        {
+            Dataset = nameof(DatasetSize.Small)
+        };
+
+        benchmarks.Setup();
+        _ = benchmarks.EfCoreTracking();
+        string fixturePath = GetBenchmarkFixturePath(benchmarks);
+        Assert.True(File.Exists(fixturePath));
+
+        benchmarks.Cleanup();
+
+        Assert.False(File.Exists(fixturePath));
+        Assert.False(File.Exists(fixturePath + "-wal"));
+        Assert.False(File.Exists(fixturePath + "-shm"));
+    }
+
+    [Fact]
+    public void FixtureDispose_ClearsPooledConnectionsAndRemovesFiles()
+    {
+        RetailDatabaseFixture fixture = RetailDatabaseFixtureFactory.Create(DatasetSize.Small);
+        string fixturePath = fixture.DatabasePath;
+
+        using (SqliteConnection pooledConnection = new(fixture.ConnectionString))
+        {
+            pooledConnection.Open();
+            using SqliteCommand command = pooledConnection.CreateCommand();
+            command.CommandText = "SELECT 1";
+            _ = command.ExecuteScalar();
+        }
+
+        fixture.Dispose();
+
+        Assert.False(File.Exists(fixturePath));
+        Assert.False(File.Exists(fixturePath + "-wal"));
+        Assert.False(File.Exists(fixturePath + "-shm"));
+    }
+
+    private static string GetBenchmarkFixturePath(object benchmark)
+    {
+        Type type = benchmark.GetType();
+        var field = type.GetField("_fixture", System.Reflection.BindingFlags.NonPublic | System.Reflection.BindingFlags.Instance);
+        Assert.NotNull(field);
+
+        RetailDatabaseFixture? fixture = field.GetValue(benchmark) as RetailDatabaseFixture;
+        Assert.NotNull(fixture);
+        return fixture.DatabasePath;
     }
 }

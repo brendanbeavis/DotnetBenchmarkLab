@@ -4,7 +4,8 @@ public enum CollectionsAggregationApproach
 {
     Linq,
     Foreach,
-    Dictionary,
+    PresizedDictionary,
+    CollectionsMarshal,
     ParallelFor,
     Plinq
 }

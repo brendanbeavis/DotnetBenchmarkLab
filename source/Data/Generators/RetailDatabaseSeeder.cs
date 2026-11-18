@@ -93,4 +93,41 @@ public static class RetailDatabaseSeeder
             generatedOrders += batchSize;
         }
     }
+
+    public static int CalculateDeterministicOrderLineCount(RetailDatasetProfile profile, int seed)
+    {
+        Random random = new(seed);
+
+        for (int index = 1; index <= profile.CustomerCount; index++)
+        {
+            _ = random.Next(Regions.Length);
+        }
+
+        for (int index = 1; index <= profile.ProductCount; index++)
+        {
+            _ = random.NextDouble();
+            _ = random.Next(Categories.Length);
+        }
+
+        int totalLines = 0;
+        for (int index = 0; index < profile.OrderCount; index++)
+        {
+            _ = random.Next(profile.CustomerCount);
+            _ = random.Next(365);
+            _ = random.Next(24 * 60);
+            _ = random.Next(Statuses.Length);
+
+            int lineCount = random.Next(profile.MinLinesPerOrder, profile.MaxLinesPerOrder + 1);
+            totalLines += lineCount;
+
+            for (int lineIndex = 0; lineIndex < lineCount; lineIndex++)
+            {
+                _ = random.Next(profile.ProductCount);
+                _ = random.Next(1, 6);
+                _ = random.Next(DiscountPercents.Length);
+            }
+        }
+
+        return totalLines;
+    }
 }

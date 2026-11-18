@@ -38,6 +38,15 @@
 - Review allocated bytes and GC generation counts.
 - Lower allocation often improves consistency under sustained throughput.
 
+## How to read these results
+
+- Treat each method as a trade-off, not a universal winner.
+- Compare **equivalent logical work** first, then compare timing/allocation.
+- Read benchmark-group boundaries before drawing conclusions (for example, full-entity vs lean projection, parser-only vs end-to-end, in-memory input vs stream input).
+- Use confidence/error/variance with means; avoid over-indexing on tiny deltas.
+- For parallel methods, validate trends on your target hardware and dataset scale.
+- For streaming JSON methods, remember incremental parsing can reduce root buffering, but transformed output can still grow with item count.
+
 ## Reporting and sharing
 
 - Preserve run artifacts (HTML/Markdown/CSV) with timestamps or snapshots.

@@ -8,23 +8,25 @@ namespace DotNetPerformanceLab.Data.Database;
 
 public static class RetailDatabaseFixtureFactory
 {
+    private static readonly string RootDirectory = Path.Combine(Path.GetTempPath(), "DotNetPerformanceLab", "sqlite-database-scenario");
+
     public static RetailDatabaseFixture Create(DatasetSize datasetSize)
     {
+        return Create(datasetSize, seedAction: null);
+    }
+
+    internal static RetailDatabaseFixture Create(
+        DatasetSize datasetSize,
+        Action<RetailDbContext, RetailDatasetProfile, int>? seedAction)
+    {
         RetailDatasetProfile profile = RetailDatasetProfiles.Get(datasetSize);
-        string rootDirectory = Path.Combine(Path.GetTempPath(), "DotNetPerformanceLab", "sqlite-database-scenario");
-        Directory.CreateDirectory(rootDirectory);
+        Directory.CreateDirectory(RootDirectory);
 
         string databasePath = Path.Combine(
-            rootDirectory,
+            RootDirectory,
             $"retail-{datasetSize.ToString().ToLowerInvariant()}-{Environment.ProcessId}-{Guid.NewGuid():N}.db");
 
-        string connectionString = new SqliteConnectionStringBuilder
-        {
-            DataSource = databasePath,
-            Mode = SqliteOpenMode.ReadWriteCreate,
-            Cache = SqliteCacheMode.Shared,
-            Pooling = true
-        }.ToString();
+        string connectionString = RetailDatabaseFixture.BuildConnectionString(databasePath, SqliteOpenMode.ReadWriteCreate, pooling: true);
 
         DbContextOptions<RetailDbContext> options = new DbContextOptionsBuilder<RetailDbContext>()
             .UseSqlite(connectionString)
@@ -32,21 +34,27 @@ public static class RetailDatabaseFixtureFactory
             .EnableSensitiveDataLogging(false)
             .Options;
 
-        using (RetailDbContext setupContext = new(options))
+        try
         {
+            using RetailDbContext setupContext = new(options);
             setupContext.Database.EnsureDeleted();
             setupContext.Database.EnsureCreated();
             setupContext.Database.ExecuteSqlRaw("PRAGMA journal_mode = WAL;");
             setupContext.Database.ExecuteSqlRaw("PRAGMA synchronous = NORMAL;");
             setupContext.Database.ExecuteSqlRaw("PRAGMA foreign_keys = ON;");
 
-            RetailDatabaseSeeder.Seed(setupContext, profile, BenchmarkConventions.DeterministicSeed);
+            (seedAction ?? RetailDatabaseSeeder.Seed)(setupContext, profile, BenchmarkConventions.DeterministicSeed);
+
+            DatabaseReportQuery reportQuery = new(
+                profile.BaseOrderDateUtc.AddDays(profile.QueryWindowStartDayOffset),
+                profile.BaseOrderDateUtc.AddDays(profile.QueryWindowStartDayOffset + profile.QueryWindowLengthDays));
+
+            return new RetailDatabaseFixture(datasetSize, databasePath, RootDirectory, options, reportQuery);
         }
-
-        DatabaseReportQuery reportQuery = new(
-            profile.BaseOrderDateUtc.AddDays(profile.QueryWindowStartDayOffset),
-            profile.BaseOrderDateUtc.AddDays(profile.QueryWindowStartDayOffset + profile.QueryWindowLengthDays));
-
-        return new RetailDatabaseFixture(datasetSize, databasePath, options, reportQuery);
+        catch
+        {
+            RetailDatabaseFixture.CleanupOwnedFiles(databasePath, RootDirectory, connectionString, throwOnDeleteError: false);
+            throw;
+        }
     }
 }

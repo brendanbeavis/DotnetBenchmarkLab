@@ -39,10 +39,12 @@ public static class JsonPayloadFixtureGenerator
             Orders = GenerateOrders(profile, customers, random)
         };
 
+        int totalLineItemCount = payload.Orders.Sum(order => order.LineItems.Count);
+
         string payloadText = JsonSerializer.Serialize(payload, StableSerializationOptions);
         byte[] payloadBytes = Encoding.UTF8.GetBytes(payloadText);
 
-        return new JsonPayloadFixture(datasetSize, payloadBytes, payloadText);
+        return new JsonPayloadFixture(datasetSize, payloadBytes, payloadText, totalLineItemCount);
     }
 
     private static ApiCustomerDto[] GenerateCustomers(int customerCount, Random random)

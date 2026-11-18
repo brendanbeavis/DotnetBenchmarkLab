@@ -4,5 +4,6 @@ public enum BenchmarkScenarioId
 {
     Database,
     Collections,
-    Json
+    Json,
+    AsyncIo
 }
