@@ -16,8 +16,11 @@ Authoritative measurements are produced by BenchmarkDotNet.
 - **Database — Retail order reporting (SQLite)**
 - **Collections — Retail transaction aggregation**
 - **JSON — Retail API payload processing**
+- **Async I/O — Retail API test batch processing**
 
 Each scenario includes Basic, Intermediate, and Advanced approaches with correctness-equivalence tests.
+
+The Async I/O scenario tests HTTP batch orchestration against a deterministic local loopback API server. It compares sequential async requests, `Task.WhenAll`, `SemaphoreSlim`-bounded concurrency, and `Parallel.ForEachAsync`-bounded concurrency. The server simulates configurable latency and returns deterministic order-status/availability responses, while each approach performs equivalent response deserialization and result aggregation.
 
 For the JSON scenario, in-memory typed deserialization benchmarks and stream-input incremental parsing benchmarks are reported as separate benchmark types.
 
@@ -66,6 +69,8 @@ dotnet run -c Release --project BenchmarkLab/BenchmarkLab.csproj -- --benchmark 
 dotnet run -c Release --project BenchmarkLab/BenchmarkLab.csproj -- --benchmark json --dataset small --json-group all
 dotnet run -c Release --project BenchmarkLab/BenchmarkLab.csproj -- --benchmark json --dataset small --json-group parser
 dotnet run -c Release --project BenchmarkLab/BenchmarkLab.csproj -- --benchmark json --dataset small --json-group endtoend
+
+dotnet run -c Release --project BenchmarkLab/BenchmarkLab.csproj -- --benchmark asyncio --dataset small
 ```
 
 ## Report output
